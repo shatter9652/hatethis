@@ -36,14 +36,39 @@ typedef struct {
 
 // ===[ Helpers ]===
 
-// Expands $BOOT: prefix to the boot device path, or returns a strdup of the input
+// Expands $BOOT: prefix to the boot device path, or returns a strdup of the input.
+// IMPORTANT: do NOT call PS2Utils_createDevicePath() here. That helper applies
+// the currently active game_change chapter scope for runtime asset reads.
+// CONFIG.JSN is the master mapping table and its entries must be expanded
+// literally, otherwise mappings like chapter3_windows/TEXTURES.BIN can be
+// collapsed or scoped incorrectly, making the PS2 fall back to the BIOS/browser
+// or draw a black screen after chapter changes.
 static char* expandBootPrefix(const char* path) {
     const char* bootPrefix = "$BOOT:";
     size_t bootPrefixLen = strlen(bootPrefix);
 
     if (strncmp(path, bootPrefix, bootPrefixLen) == 0) {
+        require(deviceKeyLoaded);
+
         const char* relativePart = path + bootPrefixLen;
-        return PS2Utils_createDevicePath(relativePart);
+
+        // Normalize only leading separators for ISO paths; host: accepts both
+        // host:DATA.WIN and host:/DATA.WIN, but cdrom0 wants cdrom0:\DATA.WIN;1.
+        while (relativePart[0] == '/' || relativePart[0] == '\\') {
+            relativePart++;
+        }
+
+        if (deviceKey.usesISO9660) {
+            size_t len = strlen(deviceKey.key) + 3 + strlen(relativePart) + 2 + 1;
+            char* out = safeMalloc(len);
+            snprintf(out, len, "%s:\\%s;1", deviceKey.key, relativePart);
+            return out;
+        } else {
+            size_t len = strlen(deviceKey.key) + 1 + strlen(relativePart) + 1;
+            char* out = safeMalloc(len);
+            snprintf(out, len, "%s:%s", deviceKey.key, relativePart);
+            return out;
+        }
     }
 
     return safeStrdup(path);
