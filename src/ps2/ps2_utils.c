@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <loadfile.h>
@@ -99,20 +100,96 @@ void PS2Utils_loadMassStorageDrivers() {
 }
 #endif
 
-// Creates a path with the device key + path for the loaded device key
+static bool PS2Utils_isAbsoluteOrDevicePath(const char* path) {
+    if (path == nullptr || path[0] == '\0') return true;
+    if (path[0] == '/' || path[0] == '\\') return true;
+    return strchr(path, ':') != nullptr;
+}
+
+static bool PS2Utils_shouldKeepRootForGameChange(const char* path) {
+    if (path == nullptr) return true;
+
+    // Boot/config files are always in the root of the boot device.
+    if (strcmp(path, "BOOT.ELF") == 0 || strcmp(path, "SLUS_000.00") == 0 ||
+        strcmp(path, "SYSTEM.CNF") == 0 || strcmp(path, "CONFIG.JSN") == 0 ||
+        strcmp(path, "CFG.JSN") == 0 || strcmp(path, "ICON.ICO") == 0) {
+        return true;
+    }
+
+    // Shared DELTARUNE music stays in the root mus/ folder.
+    if (strncmp(path, "mus/", 4) == 0 || strncmp(path, "mus\\", 4) == 0) return true;
+
+    // Save/config files are handled by CONFIG.JSN mappings/mc0, not by chapter scoping.
+    if (strcmp(path, "config.ini") == 0 || strcmp(path, "dr.ini") == 0) return true;
+    if (strncmp(path, "filec_", 6) == 0 || strncmp(path, "filech", 6) == 0) return true;
+
+    return false;
+}
+
+static char* PS2Utils_normalizeActiveGameDir(void) {
+    const char* active = getenv("BUTTERSCOTCH_PS2_ACTIVE_GAMEDIR");
+    if (active == nullptr || active[0] == '\0') active = getenv("BUTTERSCOTCH_ACTIVE_BUNDLE_DIR");
+    if (active == nullptr || active[0] == '\0') return nullptr;
+
+    while (*active == '/' || *active == '\\') active++;
+    if (active[0] == '.' && (active[1] == '/' || active[1] == '\\')) active += 2;
+
+    size_t len = strlen(active);
+    while (len > 0 && (active[len - 1] == '/' || active[len - 1] == '\\')) len--;
+    if (len == 0) return nullptr;
+
+    char* out = safeMalloc(len + 1);
+    memcpy(out, active, len);
+    out[len] = '\0';
+    for (size_t i = 0; out[i] != '\0'; i++) {
+        if (out[i] == '\\') out[i] = '/';
+    }
+    return out;
+}
+
+static char* PS2Utils_scopePathForGameChange(const char* path) {
+    if (PS2Utils_isAbsoluteOrDevicePath(path)) return safeStrdup(path);
+    if (PS2Utils_shouldKeepRootForGameChange(path)) return safeStrdup(path);
+
+    // Already chapter-scoped.
+    if (strncmp(path, "chapter", 7) == 0 || strncmp(path, "CHAPTER", 7) == 0) {
+        return safeStrdup(path);
+    }
+
+    char* active = PS2Utils_normalizeActiveGameDir();
+    if (active == nullptr) return safeStrdup(path);
+
+    size_t len = strlen(active) + 1 + strlen(path) + 1;
+    char* scoped = safeMalloc(len);
+    snprintf(scoped, len, "%s/%s", active, path);
+    free(active);
+
+    fprintf(stderr, "PS2Utils: scoped device path '%s' -> '%s'\n", path, scoped);
+    return scoped;
+}
+
+// Creates a path with the device key + path for the loaded device key.
+// During in-process game_change, PS2 renderer/audio call this directly for
+// generated assets (ATLAS.BIN, TEXTURES.BIN, SOUNDBNK.BIN, SOUNDS.BIN), bypassing
+// FileSystem::resolvePath. Scope those paths here so Chapter 3 does not render
+// with the chapter-select atlas/sound bank and black-screen.
 // You need to free after using the path!
 char* PS2Utils_createDevicePath(const char* path) {
     require(deviceKeyLoaded);
 
+    char* effectivePath = PS2Utils_scopePathForGameChange(path);
+
     if (deviceKey.usesISO9660) {
-        size_t len = strlen(deviceKey.key) + 3 + strlen(path) + 2 + 1;
+        size_t len = strlen(deviceKey.key) + 3 + strlen(effectivePath) + 2 + 1;
         char* devicePath = safeMalloc(len);
-        snprintf(devicePath, len, "%s:\\%s;1", deviceKey.key, path);
+        snprintf(devicePath, len, "%s:\\%s;1", deviceKey.key, effectivePath);
+        free(effectivePath);
         return devicePath;
     } else {
-        size_t len = strlen(deviceKey.key) + 1 + strlen(path) + 1;
+        size_t len = strlen(deviceKey.key) + 1 + strlen(effectivePath) + 1;
         char* devicePath = safeMalloc(len);
-        snprintf(devicePath, len, "%s:%s", deviceKey.key, path);
+        snprintf(devicePath, len, "%s:%s", deviceKey.key, effectivePath);
+        free(effectivePath);
         return devicePath;
     }
 }
