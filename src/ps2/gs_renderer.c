@@ -998,8 +998,64 @@ static void gsCommitBlend(GsRenderer* gs) {
     gsKit_set_primalpha(gs->gsGlobal, gs->blendEnabled ? gs->currentBlendAlpha : GS_ALPHA_NO_BLEND, 0);
 }
 
+
+static void gsReleaseLoadedAssets(GsRenderer* gs) {
+    if (gs == nullptr) return;
+
+    if (gs->texturesFile != nullptr) {
+        fclose(gs->texturesFile);
+        gs->texturesFile = nullptr;
+    }
+
+    free(gs->atlasOffsets); gs->atlasOffsets = nullptr;
+    free(gs->atlasCompressionType); gs->atlasCompressionType = nullptr;
+    free(gs->atlasTPAGEntries); gs->atlasTPAGEntries = nullptr;
+    free(gs->atlasTileEntries); gs->atlasTileEntries = nullptr;
+    hmfree(gs->tileEntryMap); gs->tileEntryMap = nullptr;
+    free(gs->chunks); gs->chunks = nullptr;
+    free(gs->atlasToChunk); gs->atlasToChunk = nullptr;
+    free(gs->atlasBpp); gs->atlasBpp = nullptr;
+    free(gs->atlasWidth); gs->atlasWidth = nullptr;
+    free(gs->atlasHeight); gs->atlasHeight = nullptr;
+    free(gs->clut4VramAddrs); gs->clut4VramAddrs = nullptr;
+    free(gs->clut8VramAddrs); gs->clut8VramAddrs = nullptr;
+    free(gs->eeCache); gs->eeCache = nullptr;
+    free(gs->eeCacheEntries); gs->eeCacheEntries = nullptr;
+    free(gs->atlasDataSizes); gs->atlasDataSizes = nullptr;
+    arrfree(gs->snapshotChunks); gs->snapshotChunks = nullptr;
+    arrfree(gs->tpagToSnapshot); gs->tpagToSnapshot = nullptr;
+    arrfree(gs->surfaces); gs->surfaces = nullptr;
+
+    gs->atlasTPAGCount = 0;
+    gs->atlasTileCount = 0;
+    gs->clut4Count = 0;
+    gs->clut8Count = 0;
+    gs->textureVramBase = 0;
+    gs->chunkCount = 0;
+    gs->reservedAtlasChunks = 0;
+    gs->atlasCount = 0;
+    gs->originalTpagCount = 0;
+    gs->originalSpriteCount = 0;
+    gs->eeCacheCapacity = 0;
+    gs->eeCacheBumpPtr = 0;
+    gs->currentSurface = -1;
+}
+
 static void gsInit(Renderer* renderer, DataWin* dataWin) {
     GsRenderer* gs = (GsRenderer*) renderer;
+
+    if (!gs->hasVramResetPointer) {
+        gs->vramResetPointer = gs->gsGlobal->CurrentPointer;
+        gs->hasVramResetPointer = true;
+        fprintf(stderr, "GsRenderer: captured VRAM reset pointer 0x%08X\n", gs->vramResetPointer);
+    } else {
+        fprintf(stderr, "GsRenderer: reinitializing for game_change; rewinding VRAM 0x%08X -> 0x%08X\n", gs->gsGlobal->CurrentPointer, gs->vramResetPointer);
+        gsKit_queue_exec(gs->gsGlobal);
+        dmaKit_wait_fast();
+        gsReleaseLoadedAssets(gs);
+        gs->gsGlobal->CurrentPointer = gs->vramResetPointer;
+    }
+    gs->initialized = true;
 
     renderer->dataWin = dataWin;
     renderer->drawColor = 0xFFFFFF;
@@ -1064,27 +1120,7 @@ static void gsInit(Renderer* renderer, DataWin* dataWin) {
 
 static void gsDestroy(Renderer* renderer) {
     GsRenderer* gs = (GsRenderer*) renderer;
-    if (gs->texturesFile != nullptr) {
-        fclose(gs->texturesFile);
-    }
-    free(gs->atlasOffsets);
-    free(gs->atlasCompressionType);
-    free(gs->atlasTPAGEntries);
-    free(gs->atlasTileEntries);
-    hmfree(gs->tileEntryMap);
-    free(gs->chunks);
-    free(gs->atlasToChunk);
-    free(gs->atlasBpp);
-    free(gs->atlasWidth);
-    free(gs->atlasHeight);
-    free(gs->clut4VramAddrs);
-    free(gs->clut8VramAddrs);
-    free(gs->eeCache);
-    free(gs->eeCacheEntries);
-    free(gs->atlasDataSizes);
-    arrfree(gs->snapshotChunks);
-    arrfree(gs->tpagToSnapshot);
-    arrfree(gs->surfaces);
+    gsReleaseLoadedAssets(gs);
     free(gs);
 }
 

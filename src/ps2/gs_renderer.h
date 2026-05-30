@@ -101,6 +101,14 @@ typedef struct {
 
     GSGLOBAL* gsGlobal;
 
+    // Renderer hot-reload state. In-process game_change calls renderer->init()
+    // again with a new DataWin, but gsKit VRAM allocations are bump-only.
+    // Remember the post-framebuffer/debug-font pointer from the first init and
+    // rewind to it before loading the next chapter's atlas/CLUTs.
+    bool initialized;
+    bool hasVramResetPointer;
+    uint32_t vramResetPointer;
+
     // View transform state
     float scaleX;
     float scaleY;
